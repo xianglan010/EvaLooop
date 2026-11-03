@@ -16,6 +16,9 @@ class EvaluationConfig:
     # Dataset configuration
     dataset: str = "mbpp_plus"
     languages: List[str] = field(default_factory=lambda: ["python"])
+    loop_type: str = "standard"
+    task_limit: Optional[int] = None
+    task_seed: int = 42
     
     # Evaluation parameters
     max_cycles: int = 10
@@ -50,6 +53,7 @@ class EvaluationConfig:
     
     # API configuration
     openai_api_key: Optional[str] = None
+    ollama_base_url: str = "http://127.0.0.1:11434"
     
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -58,6 +62,12 @@ class EvaluationConfig:
         
         if self.max_cycles <= 0:
             raise ValueError("max_cycles must be positive")
+
+        if self.loop_type not in {"standard", "chinese"}:
+            raise ValueError("loop_type must be either 'standard' or 'chinese'")
+
+        if self.task_limit is not None and self.task_limit <= 0:
+            raise ValueError("task_limit must be positive when provided")
         
         if not (0.0 <= self.temperature <= 2.0):
             raise ValueError("temperature must be between 0.0 and 2.0")
@@ -109,6 +119,9 @@ class EvaluationConfig:
             "model": self.model,
             "dataset": self.dataset,
             "languages": self.languages,
+            "loop_type": self.loop_type,
+            "task_limit": self.task_limit,
+            "task_seed": self.task_seed,
             "max_cycles": self.max_cycles,
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -120,6 +133,7 @@ class EvaluationConfig:
             "gpu_memory_utilization": self.gpu_memory_utilization,
             "max_model_len": self.max_model_len,
             "trust_remote_code": self.trust_remote_code,
+            "ollama_base_url": self.ollama_base_url,
         }
     
     def get_model_config(self) -> Dict[str, Any]:
@@ -129,7 +143,9 @@ class EvaluationConfig:
     def _create_model_config(self, model: str) -> Dict[str, Any]:
         """Create configuration for a specific model."""
         # Determine model type based on model name/path
-        if any(provider in model.lower() for provider in ["gpt", "chatgpt", "openai"]):
+        if model.lower().startswith(("ollama/", "ollama:")):
+            model_type = "ollama"
+        elif any(provider in model.lower() for provider in ["gpt", "chatgpt", "openai"]):
             model_type = "openai"
         elif "claude" in model.lower():
             model_type = "anthropic"
@@ -150,7 +166,20 @@ class EvaluationConfig:
             "top_p": self.top_p,
         }
         
-        if model_type == "openai":
+        if model_type == "ollama":
+            if model.lower().startswith("ollama/"):
+                model_id = model.split("/", 1)[1]
+            else:
+                model_id = model.split(":", 1)[1]
+            base_config.update({
+                "model_id": model_id,
+                "base_url": self.ollama_base_url,
+                "max_new_tokens": self.max_new_tokens,
+                "seed": self.seed,
+                "timeout": 600,
+                "keep_alive": "30m",
+            })
+        elif model_type == "openai":
             base_config.update({
                 "model_id": model,
                 "api_key": self.openai_api_key,
@@ -405,6 +434,20 @@ class EvaluationConfig:
     def get_task_configs(self, task_type: str = "code_generation_summarization") -> List[Dict[str, Any]]:
         """Generate task configurations based on task type."""
         if task_type == "code_generation_summarization":
+            summary_type = (
+                "chinese_code_summarization"
+                if self.loop_type == "chinese"
+                else "code_summarization"
+            )
+            summary_prompt = (
+                "用一句中文总结以下 Python 代码实现的任务，并以“编写一个 Python 函数来”开头：\n\n"
+                "```python\n{code}\n```\n\n"
+                "只返回这句中文总结，不要包含代码、Markdown 或额外解释。"
+                if self.loop_type == "chinese"
+                else "Use one sentence to summarize the following code and start with "
+                "'write a python function to':\n\n```\n{code}\n```\n\n"
+                "```\nwrite a python function to\n```"
+            )
             return [
                 {
                     "type": "code_generation",
@@ -412,8 +455,8 @@ class EvaluationConfig:
                     "prompt_template": "Generate Python code for the following task: \n{description}\nReturn only the code, without explanations or comments.",
                 },
                 {
-                    "type": "code_summarization", 
-                    "prompt_template": "Use one sentence to summarize the following code and start with 'write a python function to':\n\n```\n{code}\n```\n\n```\nwrite a python function to\n```",
+                    "type": summary_type,
+                    "prompt_template": summary_prompt,
                 },
             ]
         elif task_type == "code_translation":

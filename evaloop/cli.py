@@ -92,6 +92,10 @@ class EvaLoopCLI:
         preferred_batch_size: int = 64,
         is_chat_model: bool = True,
         system_prompt: str = "You are a helpful programming assistant.",
+        loop_type: str = "standard",
+        task_limit: Optional[int] = None,
+        task_seed: int = 42,
+        ollama_base_url: str = "http://127.0.0.1:11434",
     ) -> Dict[str, Any]:
         """
         Run code generation and summarization evaluation experiment.
@@ -128,6 +132,11 @@ class EvaLoopCLI:
             preferred_batch_size: Preferred batch size when auto-batching.
             is_chat_model: Whether the model is a chat/instruction-tuned model.
             system_prompt: System prompt for chat models.
+            loop_type: ``standard`` for English summaries or ``chinese`` for
+                the cross-lingual assignment extension.
+            task_limit: Optional number of MBPP Plus tasks to sample.
+            task_seed: Seed used for deterministic task sampling.
+            ollama_base_url: Base URL of the local Ollama server.
 
         Returns:
             Dictionary containing evaluation results with successful cycles for each task.
@@ -203,6 +212,10 @@ class EvaLoopCLI:
             is_chat_model=is_chat_model,
             system_prompt=system_prompt,
             openai_api_key=openai_api_key,
+            loop_type=loop_type,
+            task_limit=task_limit,
+            task_seed=task_seed,
+            ollama_base_url=ollama_base_url,
         )
         # Log model type detection results
         model_config = config.get_model_config()
@@ -216,6 +229,11 @@ class EvaLoopCLI:
             self.logger.info(f"  HuggingFace config: device={model_config['device']}")
         elif model_type in ["openai", "anthropic"]:
             self.logger.info(f"  API config: model_id={model_config['model_id']}")
+        elif model_type == "ollama":
+            self.logger.info(
+                f"  Ollama config: model_id={model_config['model_id']}, "
+                f"base_url={model_config['base_url']}"
+            )
 
         # Create and run evaluator
         evaluator = EvaLoopEvaluator(config)

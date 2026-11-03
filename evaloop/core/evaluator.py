@@ -2,6 +2,7 @@
 
 import json
 import logging
+import random
 from typing import Dict, Any, List
 from pathlib import Path
 
@@ -86,6 +87,25 @@ class EvaLoopEvaluator:
         """Load and prepare the dataset."""
         py_problems, ground_truth = load_mbpp_dataset()
         self.logger.info(f"Loaded MBPP dataset with {len(py_problems)} problems")
+
+        if self.config.task_limit is not None:
+            all_task_ids = list(py_problems)
+            if self.config.task_limit > len(all_task_ids):
+                raise ValueError(
+                    f"task_limit={self.config.task_limit} exceeds dataset size "
+                    f"{len(all_task_ids)}"
+                )
+            selected_ids = random.Random(self.config.task_seed).sample(
+                all_task_ids, self.config.task_limit
+            )
+            py_problems = {task_id: py_problems[task_id] for task_id in selected_ids}
+            ground_truth = {
+                task_id: ground_truth[task_id] for task_id in selected_ids
+            }
+            self.logger.info(
+                "Selected %d tasks with seed %d",
+                len(selected_ids), self.config.task_seed
+            )
         
         # Prepare prompts from dataset
         prompts = []
@@ -101,6 +121,9 @@ class EvaLoopEvaluator:
     def _create_tester(self, py_problems):
         """Create the code tester."""
         _, ground_truth = load_mbpp_dataset()  # Get ground truth
+        ground_truth = {
+            task_id: ground_truth[task_id] for task_id in py_problems
+        }
         return EvalPlusCodeTester(py_problems, ground_truth)
     
     def _run_evaluation_cycles(self, model, tasks, prompts, py_problems, tester) -> Dict[str, Any]:
@@ -128,6 +151,7 @@ class EvaLoopEvaluator:
             current_prompts = self._process_cycle_results(
                 cycle_output, model_result, tasks, py_problems, tester, current_cycle
             )
+            self._save_checkpoint(model_result, current_cycle)
             
             if not current_prompts:
                 self.logger.info(f"All prompts failed or completed after cycle {current_cycle}")
@@ -137,11 +161,26 @@ class EvaLoopEvaluator:
         self._finalize_model_result(model_result)
         
         return model_result
+
+    def _save_checkpoint(self, model_result: Dict[str, Any], cycle: int) -> None:
+        """Atomically save the current state so long GPU runs are inspectable."""
+        checkpoint = dict(model_result)
+        checkpoint["completed_cycles"] = cycle
+        output_dir = Path(self.config.output_dir)
+        output_file = output_dir / f"{self.config.experiment_name}_checkpoint.json"
+        temporary_file = output_file.with_suffix(".tmp")
+        temporary_file.write_text(
+            json.dumps([checkpoint], indent=2), encoding="utf-8"
+        )
+        temporary_file.replace(output_file)
     
     def _initialize_model_result(self, model, prompts) -> Dict[str, Any]:
         """Initialize the model result structure."""
         model_result = {
             "model": str(model),
+            "configuration": self.config.loop_type,
+            "task_seed": self.config.task_seed,
+            "task_limit": self.config.task_limit,
             # Loop budget M; needed by the analyzer to normalize the ASL metrics
             "max_cycles": self.config.max_cycles,
             "prompt_results": []

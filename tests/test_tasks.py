@@ -4,6 +4,7 @@ from evaloop.tasks import (
     BaseTask,
     CodeGenerationTask,
     CodeSummarizationTask,
+    ChineseCodeSummarizationTask,
     CodeTranslationTask,
 )
 
@@ -70,6 +71,23 @@ class TestCodeSummarizationTask:
 
     def test_is_not_testable(self, summarization_config):
         assert CodeSummarizationTask(summarization_config).produces_testable_code is False
+
+
+class TestChineseCodeSummarizationTask:
+    def test_prompt_requires_chinese_and_embeds_code(self):
+        task = ChineseCodeSummarizationTask({"type": "chinese_code_summarization"})
+        prompt = task.create_prompt("def f(x): return x")
+        assert "中文" in prompt
+        assert "def f(x): return x" in prompt
+
+    def test_postprocess_retains_assert_line(self):
+        task = ChineseCodeSummarizationTask({"type": "chinese_code_summarization"})
+        result = task.postprocess(
+            "编写一个函数，返回两个列表的共有元素。",
+            {"cycle_input": MBPP_STYLE_PROMPT},
+        )
+        assert ASSERT_LINE in result
+        assert "共有元素" in result
 
 
 class TestCodeTranslationTask:
