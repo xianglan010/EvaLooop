@@ -9,8 +9,7 @@ EvaLoop is a framework for evaluating the robustness of Large Language Models (L
 
 ## Assignment 4 extension: Chinese self-description loop
 
-**Public fork:** pending GitHub account connection (replace this line with the
-public repository URL before submission).
+**Public fork:** https://github.com/xianglan010/EvaLooop
 
 This fork adds a cross-lingual loop for CSC 591/791 Assignment 4.  Its
 research question is: **Does forcing a code model to describe its own Python
