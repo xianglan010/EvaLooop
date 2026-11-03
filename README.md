@@ -7,63 +7,48 @@
 
 EvaLoop is a framework for evaluating the robustness of Large Language Models (LLMs) through iterative dual-task cycles. The framework measures how many cycles an LLM can execute before generating code that fails functional testing, providing a quantitative metric for model robustness. It accompanies the paper [*EvaLoop: Assessing LLM Robustness in Programming from a Self-consistency Perspective*](https://arxiv.org/abs/2505.12185); results across models are published on the [leaderboard](https://evalooop.github.io/).
 
-## Assignment 4 extension: Chinese self-description loop
+## Assignment 4 extension: Chinese summary loop
 
 **Public fork:** https://github.com/xianglan010/EvaLooop
+(branch `assignment4-chinese-loop`). The submitted patch is against upstream
+branch `dev` at commit `ce22fe2`.
 
-This fork adds a cross-lingual loop for CSC 591/791 Assignment 4.  Its
-research question is: **Does forcing a code model to describe its own Python
-code in Chinese change its robustness relative to the standard English
-generation/summarization loop, and is the effect different across model
-sizes?**
+This fork adds a new loop type for CSC 591/791 Assignment 4 (Option B).
+Research question: **does asking the model to summarize its own code in
+Chinese, instead of English, change ASL, and is the effect different for a 7B
+and a 27B model?**
 
-The extension changes only the inverse task.  Code generation and MBPP Plus
-functional testing are unchanged.  After each generation, the model must
-write a one-sentence Chinese task description, mirroring the standard loop's
-one-sentence English prompt.  The framework wraps that description as a
-docstring and re-attaches the original example `assert`, so
-the function name and signature remain stable across cycles.  The model's own
-summary is still the only source of perturbation.
+Only the summary step changes. Code generation and MBPP Plus testing are the
+same as in the standard loop. After code passes the tests, the model writes a
+one-sentence Chinese summary of it (the standard loop asks for one English
+sentence). The framework puts the summary in a docstring and appends the
+original example `assert` line, so the function name and signature stay the
+same in every cycle. The model's own summary is the only thing that changes
+between cycles.
 
-Modified components:
+What I changed:
 
-- `evaloop/tasks/chinese_code_summarization.py` adds the registered Chinese
-  summarization task.
-- `EvaluationConfig` and the CLI add `--loop_type`, deterministic
-  `--task_limit` / `--task_seed` sampling, and experiment metadata.
-- `evaloop/models/ollama.py` adds a local Ollama backend for reproducible,
-  temperature-zero inference on the course server GPUs.
-- `scripts/run_assignment4.sh` reproduces the four model/configuration runs;
-  `scripts/summarize_assignment4.py` produces the required `summary.csv` and
-  failure-inspection candidates.
+- `evaloop/tasks/chinese_code_summarization.py`: new Chinese summary task,
+  registered with the task factory.
+- `EvaluationConfig` and the CLI: new options `--loop_type`, `--task_limit`,
+  and `--task_seed` (seeded task sampling), plus extra result metadata.
+- `evaloop/models/ollama.py`: a backend for local models served by Ollama.
+- `scripts/run_assignment4.sh` runs all four experiments;
+  `scripts/judge_assignment4.py` scores failed tasks with the LLM judge;
+  `scripts/summarize_assignment4.py` writes `summary.csv` and the list of
+  failures to inspect.
 
-The experiment uses the same 100-task sample for every run (Python
-`random.Random(42).sample` over EvalPlus's MBPP Plus task order), ten cycles,
-temperature 0, top-p 1, seed 42, and at most 1024 new tokens.  Generated code
-is executed only through EvalPlus's `untrusted_check` isolation.
-
-Install and run on a machine with Ollama:
-
-```bash
-python -m venv .venv
-.venv/bin/pip install -r requirements-assignment4.txt
-ollama pull qwen2.5-coder:7b-instruct-q4_K_M
-bash scripts/run_assignment4.sh
-```
-
-The local `qwen3.8` alias used by the script is Qwen3.5-27B Q4_K_M.  If that
-alias is unavailable, set `MODEL_27B` to the corresponding local Ollama tag.
-The run script also uses that local 27B model as the failure-boundary semantic
-similarity judge with EvaLoop's unchanged judge prompt, temperature 0, 16 output
-tokens, and seed 42.  It caches the judge records and writes headline semantic
-ASL values to `summary.csv`; all inference is local, so the API cost is $0.
+Settings for every run: the same 100 MBPP Plus tasks
+(`random.Random(42).sample` over EvalPlus's task order), at most ten cycles,
+temperature 0, top-p 1, seed 42, at most 1,024 output tokens. Generated code
+runs only inside EvalPlus's `untrusted_check` sandbox.
 
 ### Results
 
-`success_rate` is pass@1.  `asl_score` is the framework's headline semantic
-ASL, judged at the 23 post-first-cycle failure boundaries by the local 27B
-model.  `ASL_pow` is shown here as a diagnostic but is not written to the
-required five-column CSV.
+`success_rate` is pass@1. `asl_score` is the framework's ASL with judge
+scores for the 23 tasks that passed cycle 1 and failed later. `ASL_pow` (ASL
+with every similarity set to 1) is shown here for reference; it is not in
+`summary.csv`.
 
 | Model | Configuration | Tasks | Success | ASL | ASL_pow | Pass at cycle 10 |
 |---|---|---:|---:|---:|---:|---:|
@@ -72,25 +57,19 @@ required five-column CSV.
 | Qwen3.5-27B | standard | 100 | 0.79 | 7.704300 | 7.705000 | 0.77 |
 | Qwen3.5-27B | Chinese | 100 | 0.79 | 7.306550 | 7.309000 | 0.73 |
 
-The 7B model improves by 0.48725 ASL (+7.25%) under the Chinese boundary,
-whereas the 27B model drops by 0.39775 (-5.16%).  The ranking does not flip,
-but the 27B-minus-7B gap contracts from 0.98725 to 0.10225 (89.6%).  The full
-analysis source is in `report/assignment4_report.md`; all 23 manually inspected
-later failures and their evidence are in
+With Chinese summaries, the 7B model's ASL goes up by 0.48725 (+7.25%) and
+the 27B model's goes down by 0.39775 (-5.16%). The 27B model is still ahead,
+but the gap shrinks from 0.98725 to 0.10225. The analysis is in
+`report/assignment4_report.md`, and the 23 hand-inspected failures are in
 `analysis/manual_failure_analysis.csv`.
 
-### Reproduction details
+### How to reproduce
 
-The recorded environment used Python 3.12, Ollama 0.33.1, EvalPlus 0.3.1,
-and two installed NVIDIA RTX 6000 Ada 48 GB GPUs.  Ollama reported the two
-evaluated models as 7.6B Q4_K_M (`qwen2` architecture) and 27.3B Q4_K_M
-(`qwen35` architecture).  The local 27B tag was `qwen3.8`; it can be replaced
-in `scripts/run_assignment4.sh` and the judge command by any local tag pointing
-to the same Qwen3.5-27B Q4_K_M build.
-
-The pinned packages needed for the assignment-only path are in
-`requirements-assignment4.txt`.  Ollama must already be installed and serving
-the two model tags.  From the repository root:
+Environment used: Python 3.12, Ollama 0.33.1, EvalPlus 0.3.1, two NVIDIA RTX
+6000 Ada 48 GB GPUs. Models: Qwen2.5-Coder-7B-Instruct Q4_K_M (Ollama tag
+`qwen2.5-coder:7b-instruct-q4_K_M`, 7.6B) and Qwen3.5-27B Q4_K_M (27.3B; my
+local Ollama tag for it is `qwen3.8`). Ollama must be installed and serving
+both models. From the repository root:
 
 ```bash
 python -m venv .venv
@@ -99,12 +78,12 @@ ollama pull qwen2.5-coder:7b-instruct-q4_K_M
 bash scripts/run_assignment4.sh
 ```
 
-On a host where the 27B build has another tag, run for example
-`MODEL_27B=<local-qwen3.5-27b-tag> bash scripts/run_assignment4.sh`.
+If your 27B model has a different tag, run
+`MODEL_27B=<your-qwen3.5-27b-tag> bash scripts/run_assignment4.sh`.
 
-The last command runs all four experiments, skips an already completed result,
-scores every failure boundary, and regenerates `summary.csv`.  To repeat only
-the analysis from existing result JSON:
+The script runs all four experiments (skipping any that already finished),
+scores the failed tasks with the judge, and writes `summary.csv`. To redo only
+the scoring and the summary from existing result files:
 
 ```bash
 PYTHONPATH="$PWD" .venv/bin/python scripts/judge_assignment4.py \
@@ -113,28 +92,26 @@ PYTHONPATH="$PWD" .venv/bin/python scripts/summarize_assignment4.py \
   results/assignment4 --judge-name qwen35-27b-local
 ```
 
-The semantic judge uses the byte-identical prompt at
-`evaloop.analysis.similarity.DEFAULT_JUDGE_PROMPT`.  It receives the prompts
-and generated code on both sides of the failure boundary, returns one score in
-`[0,1]`, and is parsed and cached by the existing framework logic.  Temperature
-is 0, top-p is 1, seed is 42, the output budget is 16 tokens, and total and
-per-example API cost are $0.  These scores are therefore suitable for the four
-within-study comparisons but not directly comparable with the public
-GPT-4-Turbo-scored leaderboard.
+LLM judge: the local 27B model with the framework's unchanged prompt
+`evaloop.analysis.similarity.DEFAULT_JUDGE_PROMPT`. It sees the prompts and
+code before and after a failure and returns one score in `[0,1]`, which the
+existing framework code parses and caches. Settings: temperature 0, top-p 1,
+seed 42, 16 output tokens. Cost: $0 in total and per example (all local).
+The paper used GPT-4 Turbo as the judge, so these ASL values can be compared
+with each other but not with the public leaderboard.
 
-Run the checks with:
+Tests and lint:
 
 ```bash
 PYTHONPATH="$PWD" .venv/bin/python -m pytest -q
 PYTHONPATH="$PWD" .venv/bin/python -m ruff check evaloop tests scripts
 ```
 
-The submission package contains the four `*_results.json` files, four judge
-sidecars, `summary.csv`, the PDF/DOCX report, the manual-inspection CSV, this
-README, and a patch against the upstream branch.  The course data package is
-not included.  OpenAI Codex was used as a development and drafting assistant,
-not as an experimental judge or classifier; all experimental model calls and
-automatic decisions are described above.
+The submission ZIP contains the four `*_results.json` files, the four judge
+score files, `summary.csv`, the PDF report, the manual-inspection CSV, this
+README, and the patch. It does not include the course data package. I used
+OpenAI Codex as a coding and writing assistant only; it was not used as a
+judge or classifier in the experiments.
 
 ## 🚀 Quick Start
 
